@@ -17,6 +17,7 @@ class DefaultAdjacentMinesCounter implements AdjacentMinesCounter {
 
 public class MinesweeperGame implements MinesweeperBoard {
 
+    private static MinesweeperGame instance;
     private int[][] minesweeperBoard;
     private boolean[][] flags;
     private int boardSize;
@@ -25,7 +26,13 @@ public class MinesweeperGame implements MinesweeperBoard {
     private boolean isNext = true;
     private AdjacentMinesCounter adjacentMinesCounter;
 
-    public MinesweeperGame(int boardSize, int countMines) {
+    public static MinesweeperGame getInstance(int boardSize, int countMines){
+        if (instance == null) {
+            instance = new MinesweeperGame(boardSize,countMines);
+        }
+        return instance;
+    }
+    private MinesweeperGame(int boardSize, int countMines) {
         this.boardSize = boardSize;
         this.countMines = countMines;
         this.adjacentMinesCounter = new DefaultAdjacentMinesCounter();

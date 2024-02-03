@@ -3,14 +3,46 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 
-public class LoginRegistrationGUI extends JFrame {
+class LoginStrategy implements AuthenticationStrategy {
+    private final UserRepository userRepository;
 
+    public LoginStrategy(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    @Override
+    public int performAction(String login, String password) {
+        return userRepository.login(login, password);
+    }
+}
+
+class RegistrationStrategy implements AuthenticationStrategy {
+    private final UserRepository userRepository;
+
+    public RegistrationStrategy(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    @Override
+    public int performAction(String login, String password) {
+        int userId = userRepository.getLastUserId() + 1;
+        User user = new User(userId, login, password);
+        userRepository.register(user);
+        return userId;
+    }
+}
+
+public class LoginRegistrationGUI extends JFrame {
     private final JTextField loginTextField;
     private final JPasswordField passwordField;
     private final PostgreSQLModule postgreSQLModule;
     private int user_id;
+    private final UserRepository userRepository;
+    private AuthenticationStrategy authenticationStrategy;
 
     public LoginRegistrationGUI() {
+        userRepository = PostgreSQLModule.getInstance().getUserRepository();
+
         setTitle("Вход / Регистрация");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(300, 150);
@@ -36,35 +68,22 @@ public class LoginRegistrationGUI extends JFrame {
         panel.add(loginButton);
         panel.add(registerButton);
 
-        loginButton.addActionListener(e -> handleLogin());
-
-        registerButton.addActionListener(e -> handleRegistration());
+        loginButton.addActionListener(e -> handleAuthentication(new LoginStrategy(userRepository)));
+        registerButton.addActionListener(e -> handleAuthentication(new RegistrationStrategy(userRepository)));
 
         add(panel);
         setVisible(true);
     }
 
-    private void handleLogin() {
-        user_id = postgreSQLModule.getLastUserId();
-        String login = loginTextField.getText();
-        String password = new String(passwordField.getPassword());
-
-        if(postgreSQLModule.login(login, password) > 0){
+    private void handleAuthentication(AuthenticationStrategy strategy) {
+        authenticationStrategy = strategy;
+        user_id = authenticationStrategy.performAction(loginTextField.getText(), new String(passwordField.getPassword()));
+        if (user_id > 0) {
             startApp();
         }
     }
 
-    private void handleRegistration() {
-        user_id = postgreSQLModule.getLastUserId() + 1;
-        String login = loginTextField.getText();
-        String password = new String(passwordField.getPassword());
-
-        postgreSQLModule.register(user_id, login, password);
-
-        startApp();
-    }
-
-    private void startApp(){
+    private void startApp() {
         MainGUI app = new MainGUI(user_id);
         app.setVisible(true);
     }

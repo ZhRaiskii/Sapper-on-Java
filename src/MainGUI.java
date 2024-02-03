@@ -1,16 +1,13 @@
+import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Objects;
-import javax.swing.*;
 
-interface GameObserver {
-    void gameWon();
-}
+public class MainGUI extends JFrame implements GameObserver {
 
-public class MainGUI extends JFrame implements GameObserver{
-
-    private MinesweeperGame minesweeperGame;
+    private MinesweeperViewModel viewModel;
     private JButton[][] buttons;
     private JPanel topPanel;
     private JPanel gamePanel;
@@ -21,57 +18,29 @@ public class MainGUI extends JFrame implements GameObserver{
     private int countFlags;
     private int elapsedTime;
     private Timer timer;
-    private final ArrayList<GameObserver> observers = new ArrayList<GameObserver>();
     private final int user_id;
-    private final PostgreSQLModule postgreSQLModule;
+    private final StatisticsRepository statisticsRepository;
 
     public MainGUI(int user_id) {
         this.user_id = user_id;
-        initializeMinesweeperGame();
+        initializeViewModel(user_id);
         initializeUI();
         createMenu();
         createTopPanel();
         addGameObserver(this);
-        postgreSQLModule = PostgreSQLModule.getInstance();
+        statisticsRepository = PostgreSQLModule.getInstance().getStatisticsRepository();
     }
 
-    public class StatisticsUpdater {
-        private final PostgreSQLModule postgreSQLModule;
-
-        public StatisticsUpdater(PostgreSQLModule postgreSQLModule) {
-            this.postgreSQLModule = postgreSQLModule;
-        }
-
-        public void updateStatistics(int user_id, MinesweeperGame minesweeperGame, int elapsedTime) {
-            Statistics stats = postgreSQLModule.getStatistics(user_id);
-
-            if (stats != null) {
-                int boardSize = minesweeperGame.getBoardSize();
-                int currentStatistic = switch (boardSize) {
-                    case 5 -> stats.getStatistic_5x5();
-                    case 8 -> stats.getStatistic_8x8();
-                    case 16 -> stats.getStatistic_16x16();
-                    default -> 0;
-                };
-
-                if (currentStatistic > elapsedTime || currentStatistic == 0) {
-                    switch (boardSize) {
-                        case 5 -> stats.setStatistic_5x5(elapsedTime);
-                        case 8 -> stats.setStatistic_8x8(elapsedTime);
-                        case 16 -> stats.setStatistic_16x16(elapsedTime);
-                    }
-
-                    postgreSQLModule.sendStatistic(user_id, stats.getStatistic_5x5(), stats.getStatistic_8x8(), stats.getStatistic_16x16());
-                }
-            }
-        }
+    private void initializeViewModel(int user_id) {
+        viewModel = new MinesweeperViewModel(user_id);
+        viewModel.addObserver(this);
     }
 
     @Override
     public void gameWon() {
         showWinMessage();
         int elapsedTime = extractElapsedTime();
-        updateStatistics(elapsedTime);
+        viewModel.updateStatistics(elapsedTime);
         endGame();
     }
 
@@ -84,9 +53,9 @@ public class MainGUI extends JFrame implements GameObserver{
     }
 
     private void updateStatistics(int elapsedTime) {
-        StatisticsUpdater statisticsUpdater = new StatisticsUpdater(postgreSQLModule);
-        statisticsUpdater.updateStatistics(user_id, minesweeperGame, elapsedTime);
+        viewModel.updateStatistics(elapsedTime);
     }
+
     private void updateUIAfterGame() {
         openAllCells();
         disableAllButtons();
@@ -97,7 +66,7 @@ public class MainGUI extends JFrame implements GameObserver{
         if (isFlagMode) {
             updateUIConcrete(row, column);
         } else {
-            buttons[row][column].setText(getEmoji(minesweeperGame.getValueAt(row, column)));
+            buttons[row][column].setText(getEmoji(viewModel.getValueAt(row, column)));
         }
     }
 
@@ -113,7 +82,7 @@ public class MainGUI extends JFrame implements GameObserver{
         topPanel = new JPanel();
         add(topPanel, BorderLayout.NORTH);
 
-        gamePanel = new JPanel(new GridLayout(minesweeperGame.getBoardSize(), minesweeperGame.getBoardSize()));
+        gamePanel = new JPanel(new GridLayout(viewModel.getBoardSize(), viewModel.getBoardSize()));
         add(gamePanel, BorderLayout.CENTER);
 
         updateGameBoard();
@@ -142,11 +111,10 @@ public class MainGUI extends JFrame implements GameObserver{
         toggleModeButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if(Objects.equals(toggleModeButton.getText(), "⛏️")){
+                if (Objects.equals(toggleModeButton.getText(), "⛏️")) {
                     toggleModeButton.setText("\uD83D\uDEA9");
                     isFlagMode = true;
-                }
-                else{
+                } else {
                     toggleModeButton.setText("⛏️");
                     isFlagMode = false;
                 }
@@ -157,11 +125,11 @@ public class MainGUI extends JFrame implements GameObserver{
 
     private void updateGameBoard() {
         Font emojiFont = new Font("Segoe UI Emoji", Font.PLAIN, 14);
-        gamePanel.setLayout(new GridLayout(minesweeperGame.getBoardSize(), minesweeperGame.getBoardSize()));
-        buttons = new JButton[minesweeperGame.getBoardSize()][minesweeperGame.getBoardSize()];
+        gamePanel.setLayout(new GridLayout(viewModel.getBoardSize(), viewModel.getBoardSize()));
+        buttons = new JButton[viewModel.getBoardSize()][viewModel.getBoardSize()];
         gamePanel.removeAll();
-        for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
-            for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
+        for (int i = 0; i < viewModel.getBoardSize(); i++) {
+            for (int j = 0; j < viewModel.getBoardSize(); j++) {
                 buttons[i][j] = new JButton();
                 buttons[i][j].setFont(emojiFont);
                 buttons[i][j].setPreferredSize(new Dimension(30, 30));
@@ -178,8 +146,8 @@ public class MainGUI extends JFrame implements GameObserver{
         isPlaying = true;
         updateGameBoard();
         activateAllButtons();
-        minesweeperGame.initializeBoard();
-        countFlags = minesweeperGame.getMinesCount();
+        viewModel.startNewGame(viewModel.getBoardSize(), viewModel.getMinesCount());
+        countFlags = viewModel.getMinesCount();
         flagsLabel.setText("Флаги:" + countFlags);
         startTimer();
     }
@@ -227,20 +195,20 @@ public class MainGUI extends JFrame implements GameObserver{
     private void showStatisticsWindow() {
         JFrame statisticsFrame = new JFrame("Статистика");
         statisticsFrame.setLayout(new GridLayout(5, 2, 5, 5)); // 5 rows, 2 columns, with gaps
-        Statistics stats = postgreSQLModule.getStatistics(user_id);
+        Statistics stats = statisticsRepository.getStatistics(user_id);
         int statistic_5x5 = 0;
         int statistic_8x8 = 0;
         int statistic_16x16 = 0;
-        if(stats != null) {
+        if (stats != null) {
             statistic_5x5 = stats.getStatistic_5x5();
             statistic_8x8 = stats.getStatistic_8x8();
             statistic_16x16 = stats.getStatistic_16x16();
         }
-        if (minesweeperGame.getBoardSize() == 5 && statistic_5x5 > elapsedTime) {
+        if (viewModel.getBoardSize() == 5 && statistic_5x5 > elapsedTime) {
             statistic_5x5 = elapsedTime;
-        } else if (minesweeperGame.getBoardSize() == 8 && statistic_8x8 > elapsedTime) {
+        } else if (viewModel.getBoardSize() == 8 && statistic_8x8 > elapsedTime) {
             statistic_8x8 = elapsedTime;
-        } else if (minesweeperGame.getBoardSize() == 16 && statistic_16x16 > elapsedTime) {
+        } else if (viewModel.getBoardSize() == 16 && statistic_16x16 > elapsedTime) {
             statistic_16x16 = elapsedTime;
         }
         JLabel nameLabel = new JLabel("Ваше имя:");
@@ -284,24 +252,17 @@ public class MainGUI extends JFrame implements GameObserver{
         statisticsFrame.setVisible(true);
     }
 
-
-
     private JMenuItem createSizeMenuItem(String label, int size, int windowSize) {
         JMenuItem sizeItem = new JMenuItem(label);
         sizeItem.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                minesweeperGame.setBorderSize(size);
+                viewModel.startNewGame(size, size * 2); // Assuming mines count is twice the board size
                 updateGameBoard();
-                minesweeperGame.initializeBoard();
-                setBounds(0,0,windowSize, windowSize);
+                setBounds(0, 0, windowSize, windowSize);
             }
         });
         return sizeItem;
-    }
-
-    private void initializeMinesweeperGame() {
-        this.minesweeperGame = new MinesweeperGame(5, 2);
     }
 
     private class ButtonClickListener implements ActionListener {
@@ -317,13 +278,13 @@ public class MainGUI extends JFrame implements GameObserver{
         public void actionPerformed(ActionEvent e) {
             if (isPlaying) {
                 if (!isFlagMode) {
-                    if (!minesweeperGame.getFlag(row, col)) {
-                        if (minesweeperGame.getValueAt(row, col) == 0) {
-                            minesweeperGame.openCell(row, col);
+                    if (!viewModel.getFlag(row, col)) {
+                        if (viewModel.getValueAt(row, col) == 0) {
+                            viewModel.openCell(row, col);
                             updateUI();
-                        } else if (minesweeperGame.getValueAt(row, col) == -1) {
+                        } else if (viewModel.getValueAt(row, col) == -1) {
                             endGame();
-                        } else if (minesweeperGame.getValueAt(row, col) != -2) {
+                        } else if (viewModel.getValueAt(row, col) != -2) {
                             updateUIConcrete(row, col);
                         }
                     }
@@ -335,75 +296,74 @@ public class MainGUI extends JFrame implements GameObserver{
         }
 
         private void checkGameWon() {
-            if (minesweeperGame.isGameWon()) {
+            if (viewModel.isGameWon()) {
                 updateUIAfterGameWon();
             }
         }
     }
 
     private void openAllCells() {
-        for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
-            for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
-                buttons[i][j].setText(getEmoji(minesweeperGame.getValueAt(i, j)));
+        for (int i = 0; i < viewModel.getBoardSize(); i++) {
+            for (int j = 0; j < viewModel.getBoardSize(); j++) {
+                buttons[i][j].setText(getEmoji(viewModel.getValueAt(i, j)));
             }
         }
     }
 
     private void disableAllButtons() {
-        for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
-            for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
+        for (int i = 0; i < viewModel.getBoardSize(); i++) {
+            for (int j = 0; j < viewModel.getBoardSize(); j++) {
                 buttons[i][j].setEnabled(false);
             }
         }
     }
+
     private void activateAllButtons() {
-        for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
-            for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
+        for (int i = 0; i < viewModel.getBoardSize(); i++) {
+            for (int j = 0; j < viewModel.getBoardSize(); j++) {
                 buttons[i][j].setEnabled(true);
             }
         }
     }
 
     private void updateUIConcrete(int row, int column) {
-        if(isFlagMode){
-            if(Objects.equals(buttons[row][column].getText(), "\uD83D\uDEA9")){
+        if (isFlagMode) {
+            if (Objects.equals(buttons[row][column].getText(), "\uD83D\uDEA9")) {
                 buttons[row][column].setText("");
-                minesweeperGame.removeFlag(row,column);
+                viewModel.removeFlag(row, column);
                 countFlags++;
                 updateFlagsUI();
-            }
-            else if(countFlags > 0){
+            } else if (countFlags > 0) {
                 buttons[row][column].setText("\uD83D\uDEA9");
-                minesweeperGame.setFlag(row,column);
+                viewModel.setFlag(row, column);
                 countFlags--;
                 updateFlagsUI();
             }
-        }
-        else{
-            buttons[row][column].setText(getEmoji(minesweeperGame.getValueAt(row, column)));
+        } else {
+            buttons[row][column].setText(getEmoji(viewModel.getValueAt(row, column)));
         }
     }
 
     private void updateUI() {
-        for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
-            for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
-                int value = minesweeperGame.getValueAt(i, j);
+        for (int i = 0; i < viewModel.getBoardSize(); i++) {
+            for (int j = 0; j < viewModel.getBoardSize(); j++) {
+                int value = viewModel.getValueAt(i, j);
 
                 if (value == -2) {
                     buttons[i][j].setBackground(Color.GRAY);
                     buttons[i][j].setEnabled(false);
 
-                    if (i + 1 < minesweeperGame.getBoardSize() && minesweeperGame.getValueAt(i + 1, j) >= 1 && minesweeperGame.getValueAt(i + 1, j) < 4) {
-                        buttons[i + 1][j].setText(getEmoji(minesweeperGame.getValueAt(i + 1, j)));
+                    if (i + 1 < viewModel.getBoardSize() && viewModel.getValueAt(i + 1, j) >= 1 && viewModel.getValueAt(i + 1, j) < 4) {
+                        buttons[i + 1][j].setText(getEmoji(viewModel.getValueAt(i + 1, j)));
                     }
-                    if (i - 1 >= 0 && minesweeperGame.getValueAt(i - 1, j) >= 1 && minesweeperGame.getValueAt(i - 1, j) < 4) {
-                        buttons[i - 1][j].setText(getEmoji(minesweeperGame.getValueAt(i - 1, j)));
+                    if (i - 1 >= 0 && viewModel.getValueAt(i - 1, j) >= 1 && viewModel.getValueAt(i - 1, j) < 4) {
+                        buttons[i - 1][j].setText(getEmoji(viewModel.getValueAt(i - 1, j)));
                     }
-                    if (j + 1 < minesweeperGame.getBoardSize() && minesweeperGame.getValueAt(i, j + 1) >= 1 && minesweeperGame.getValueAt(i, j + 1) < 4) {
-                        buttons[i][j + 1].setText(getEmoji(minesweeperGame.getValueAt(i, j + 1)));
+                    if (j + 1 < viewModel.getBoardSize() && viewModel.getValueAt(i, j + 1) >= 1 && viewModel.getValueAt(i, j + 1) < 4) {
+                        buttons[i][j + 1].setText(getEmoji(viewModel.getValueAt(i, j + 1)));
                     }
-                    if (j - 1 >= 0 && minesweeperGame.getValueAt(i, j - 1) >= 1 && minesweeperGame.getValueAt(i, j - 1) < 4) {
-                        buttons[i][j - 1].setText(getEmoji(minesweeperGame.getValueAt(i, j - 1)));
+                    if (j - 1 >= 0 && viewModel.getValueAt(i, j - 1) >= 1 && viewModel.getValueAt(i, j - 1) < 4) {
+                        buttons[i][j - 1].setText(getEmoji(viewModel.getValueAt(i, j - 1)));
                     }
                 }
             }
@@ -421,15 +381,12 @@ public class MainGUI extends JFrame implements GameObserver{
         };
     }
 
-
     private void addGameObserver(GameObserver observer) {
-        observers.add(observer);
+        viewModel.addObserver((MainGUI) observer);
     }
 
     private void notifyGameObservers() {
-        for (GameObserver observer : observers) {
-            observer.gameWon();
-        }
+        viewModel.notifyGameObservers();
     }
 
     private void startTimer() {
@@ -453,7 +410,106 @@ public class MainGUI extends JFrame implements GameObserver{
     private void updateElapsedTime() {
         timeLabel.setText("Время: " + elapsedTime);
     }
+
     private void updateFlagsUI() {
         flagsLabel.setText("Флаги: " + countFlags);
+    }
+    public class StatisticsUpdater {
+        private final PostgreSQLModule postgreSQLModule;
+
+        public StatisticsUpdater(PostgreSQLModule postgreSQLModule) {
+            this.postgreSQLModule = postgreSQLModule;
+        }
+
+        public void updateStatistics(int user_id, MinesweeperGame minesweeperGame, int elapsedTime) {
+            Statistics stats = statisticsRepository.getStatistics(user_id);
+
+            if (stats != null) {
+                int boardSize = minesweeperGame.getBoardSize();
+                int currentStatistic = switch (boardSize) {
+                    case 5 -> stats.getStatistic_5x5();
+                    case 8 -> stats.getStatistic_8x8();
+                    case 16 -> stats.getStatistic_16x16();
+                    default -> 0;
+                };
+
+                if (currentStatistic > elapsedTime || currentStatistic == 0) {
+                    switch (boardSize) {
+                        case 5 -> stats.setStatistic_5x5(elapsedTime);
+                        case 8 -> stats.setStatistic_8x8(elapsedTime);
+                        case 16 -> stats.setStatistic_16x16(elapsedTime);
+                    }
+
+                    statisticsRepository.sendStatistic(stats);
+                }
+            }
+        }
+    }
+    public class MinesweeperViewModel {
+        private MinesweeperGame minesweeperGame;
+        private final ArrayList<GameObserver> observers = new ArrayList<>();
+        private final int user_id;
+        private final PostgreSQLModule postgreSQLModule;
+
+        public MinesweeperViewModel(int user_id) {
+            this.user_id = user_id;
+            initializeMinesweeperGame();
+            postgreSQLModule = PostgreSQLModule.getInstance();
+        }
+
+        public void updateStatistics(int elapsedTime) {
+            StatisticsUpdater statisticsUpdater = new StatisticsUpdater(postgreSQLModule);
+            statisticsUpdater.updateStatistics(user_id, minesweeperGame, elapsedTime);
+        }
+
+        private void initializeMinesweeperGame() {
+            this.minesweeperGame = MinesweeperGame.getInstance(5, 2);
+        }
+
+        public void addObserver(MainGUI observer) {
+            observers.add(observer);
+        }
+
+        public void notifyGameObservers() {
+            for (GameObserver observer : observers) {
+                observer.gameWon();
+            }
+        }
+
+        public void startNewGame(int boardSize, int minesCount) {
+            minesweeperGame = MinesweeperGame.getInstance(boardSize, minesCount);
+        }
+
+        public int getBoardSize() {
+            return minesweeperGame.getBoardSize();
+        }
+
+        public int getMinesCount() {
+            return minesweeperGame.getMinesCount();
+        }
+
+        public int getValueAt(int row, int col) {
+            return minesweeperGame.getValueAt(row, col);
+        }
+
+        public void openCell(int row, int col) {
+            minesweeperGame.openCell(row, col);
+        }
+
+        public boolean getFlag(int row, int col) {
+            return minesweeperGame.getFlag(row, col);
+        }
+
+        public void setFlag(int row, int col) {
+            minesweeperGame.setFlag(row, col);
+        }
+
+        public void removeFlag(int row, int col) {
+            minesweeperGame.removeFlag(row, col);
+        }
+
+        public boolean isGameWon() {
+            return minesweeperGame.isGameWon();
+        }
     }
 }
