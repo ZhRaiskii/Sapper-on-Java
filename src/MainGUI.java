@@ -21,19 +21,89 @@ public class MainGUI extends JFrame implements GameObserver{
     private int countFlags;
     private int elapsedTime;
     private Timer timer;
-    private ArrayList<GameObserver> observers = new ArrayList<GameObserver>();
+    private final ArrayList<GameObserver> observers = new ArrayList<GameObserver>();
+    private final int user_id;
+    private final PostgreSQLModule postgreSQLModule;
 
-    public MainGUI() {
+    public MainGUI(int user_id) {
+        this.user_id = user_id;
         initializeMinesweeperGame();
         initializeUI();
         createMenu();
         createTopPanel();
         addGameObserver(this);
+        postgreSQLModule = PostgreSQLModule.getInstance();
     }
+
+    public class StatisticsUpdater {
+        private final PostgreSQLModule postgreSQLModule;
+
+        public StatisticsUpdater(PostgreSQLModule postgreSQLModule) {
+            this.postgreSQLModule = postgreSQLModule;
+        }
+
+        public void updateStatistics(int user_id, MinesweeperGame minesweeperGame, int elapsedTime) {
+            Statistics stats = postgreSQLModule.getStatistics(user_id);
+
+            if (stats != null) {
+                int boardSize = minesweeperGame.getBoardSize();
+                int currentStatistic = switch (boardSize) {
+                    case 5 -> stats.getStatistic_5x5();
+                    case 8 -> stats.getStatistic_8x8();
+                    case 16 -> stats.getStatistic_16x16();
+                    default -> 0;
+                };
+
+                if (currentStatistic > elapsedTime || currentStatistic == 0) {
+                    switch (boardSize) {
+                        case 5 -> stats.setStatistic_5x5(elapsedTime);
+                        case 8 -> stats.setStatistic_8x8(elapsedTime);
+                        case 16 -> stats.setStatistic_16x16(elapsedTime);
+                    }
+
+                    postgreSQLModule.sendStatistic(user_id, stats.getStatistic_5x5(), stats.getStatistic_8x8(), stats.getStatistic_16x16());
+                }
+            }
+        }
+    }
+
     @Override
     public void gameWon() {
-        JOptionPane.showMessageDialog(this, "Вы выиграли!");
+        showWinMessage();
+        int elapsedTime = extractElapsedTime();
+        updateStatistics(elapsedTime);
         endGame();
+    }
+
+    private void showWinMessage() {
+        JOptionPane.showMessageDialog(this, "Вы выиграли!");
+    }
+
+    private int extractElapsedTime() {
+        return Integer.parseInt(timeLabel.getText().replaceAll("\\D", ""));
+    }
+
+    private void updateStatistics(int elapsedTime) {
+        StatisticsUpdater statisticsUpdater = new StatisticsUpdater(postgreSQLModule);
+        statisticsUpdater.updateStatistics(user_id, minesweeperGame, elapsedTime);
+    }
+    private void updateUIAfterGame() {
+        openAllCells();
+        disableAllButtons();
+        stopTimer();
+    }
+
+    private void updateUIAfterCellClick(int row, int column) {
+        if (isFlagMode) {
+            updateUIConcrete(row, column);
+        } else {
+            buttons[row][column].setText(getEmoji(minesweeperGame.getValueAt(row, column)));
+        }
+    }
+
+    private void updateUIAfterGameWon() {
+        updateUIAfterGame();
+        notifyGameObservers();
     }
 
     private void initializeUI() {
@@ -55,15 +125,11 @@ public class MainGUI extends JFrame implements GameObserver{
 
     private void createTopPanel() {
         JButton startButton = new JButton("Старт");
-        startButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                startGame();
-            }
-        });
+        startButton.addActionListener(e -> startGame());
+
         JButton toggleModeButton = getToggleModeButton();
         timeLabel = new JLabel("Время: 0");
-        flagsLabel = new JLabel("Флаги: " + String.valueOf(countFlags));
+        flagsLabel = new JLabel("Флаги: " + countFlags);
 
         topPanel.add(startButton);
         topPanel.add(toggleModeButton);
@@ -76,7 +142,7 @@ public class MainGUI extends JFrame implements GameObserver{
         toggleModeButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if(toggleModeButton.getText() == "⛏️"){
+                if(Objects.equals(toggleModeButton.getText(), "⛏️")){
                     toggleModeButton.setText("\uD83D\uDEA9");
                     isFlagMode = true;
                 }
@@ -93,17 +159,17 @@ public class MainGUI extends JFrame implements GameObserver{
         Font emojiFont = new Font("Segoe UI Emoji", Font.PLAIN, 14);
         gamePanel.setLayout(new GridLayout(minesweeperGame.getBoardSize(), minesweeperGame.getBoardSize()));
         buttons = new JButton[minesweeperGame.getBoardSize()][minesweeperGame.getBoardSize()];
-        gamePanel.removeAll();  // Удаляем все кнопки из панели
+        gamePanel.removeAll();
         for (int i = 0; i < minesweeperGame.getBoardSize(); i++) {
             for (int j = 0; j < minesweeperGame.getBoardSize(); j++) {
                 buttons[i][j] = new JButton();
-                buttons[i][j].setFont(emojiFont); // Установка шрифта для кнопок
-                buttons[i][j].setPreferredSize(new Dimension(30, 30)); // Установка размера кнопок
+                buttons[i][j].setFont(emojiFont);
+                buttons[i][j].setPreferredSize(new Dimension(30, 30));
                 buttons[i][j].addActionListener(new ButtonClickListener(i, j));
                 gamePanel.add(buttons[i][j]);
             }
         }
-        gamePanel.repaint();  // Обновление панели игры
+        gamePanel.repaint();
         gamePanel.revalidate();
         disableAllButtons();
     }
@@ -120,9 +186,7 @@ public class MainGUI extends JFrame implements GameObserver{
 
     private void endGame() {
         isPlaying = false;
-        openAllCells();
-        disableAllButtons();
-        stopTimer();
+        updateUIAfterGame();
     }
 
     private JMenu createChooseSizeSubMenu() {
@@ -148,8 +212,78 @@ public class MainGUI extends JFrame implements GameObserver{
         settingsMenu.add(chooseSizeSubMenu);
         menuBar.add(settingsMenu);
 
+        JMenuItem statisticsMenuItem = new JMenuItem("Статистика");
+        statisticsMenuItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                showStatisticsWindow();
+            }
+        });
+        menuBar.add(statisticsMenuItem);
+
         setJMenuBar(menuBar);
     }
+
+    private void showStatisticsWindow() {
+        JFrame statisticsFrame = new JFrame("Статистика");
+        statisticsFrame.setLayout(new GridLayout(5, 2, 5, 5)); // 5 rows, 2 columns, with gaps
+        Statistics stats = postgreSQLModule.getStatistics(user_id);
+        int statistic_5x5 = 0;
+        int statistic_8x8 = 0;
+        int statistic_16x16 = 0;
+        if(stats != null) {
+            statistic_5x5 = stats.getStatistic_5x5();
+            statistic_8x8 = stats.getStatistic_8x8();
+            statistic_16x16 = stats.getStatistic_16x16();
+        }
+        if (minesweeperGame.getBoardSize() == 5 && statistic_5x5 > elapsedTime) {
+            statistic_5x5 = elapsedTime;
+        } else if (minesweeperGame.getBoardSize() == 8 && statistic_8x8 > elapsedTime) {
+            statistic_8x8 = elapsedTime;
+        } else if (minesweeperGame.getBoardSize() == 16 && statistic_16x16 > elapsedTime) {
+            statistic_16x16 = elapsedTime;
+        }
+        JLabel nameLabel = new JLabel("Ваше имя:");
+        JTextField nameTextField = new JTextField();
+        nameTextField.setEditable(false);
+        statisticsFrame.add(nameLabel);
+        statisticsFrame.add(nameTextField);
+
+        JLabel record5x5Label = new JLabel("Рекорд по времени в режиме 5x5:");
+        JTextField record5x5TextField = new JTextField();
+        record5x5TextField.setEditable(false);
+        record5x5TextField.setText(String.valueOf(statistic_5x5));
+        statisticsFrame.add(record5x5Label);
+        statisticsFrame.add(record5x5TextField);
+
+        JLabel record8x8Label = new JLabel("Рекорд по времени в режиме 8x8:");
+        JTextField record8x8TextField = new JTextField();
+        record8x8TextField.setEditable(false);
+        record8x8TextField.setText(String.valueOf(statistic_8x8));
+        statisticsFrame.add(record8x8Label);
+        statisticsFrame.add(record8x8TextField);
+
+        JLabel record16x16Label = new JLabel("Рекорд по времени в режиме 16x16:");
+        JTextField record16x16TextField = new JTextField();
+        record16x16TextField.setEditable(false);
+        record16x16TextField.setText(String.valueOf(statistic_16x16));
+        statisticsFrame.add(record16x16Label);
+        statisticsFrame.add(record16x16TextField);
+
+        JButton okButton = new JButton("OK");
+        okButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                statisticsFrame.dispose();
+            }
+        });
+        statisticsFrame.add(okButton);
+
+        statisticsFrame.setSize(600, 250);
+        statisticsFrame.setLocationRelativeTo(this);
+        statisticsFrame.setVisible(true);
+    }
+
 
 
     private JMenuItem createSizeMenuItem(String label, int size, int windowSize) {
@@ -171,7 +305,8 @@ public class MainGUI extends JFrame implements GameObserver{
     }
 
     private class ButtonClickListener implements ActionListener {
-        private int row, col;
+        private final int row;
+        private final int col;
 
         public ButtonClickListener(int row, int col) {
             this.row = row;
@@ -193,7 +328,7 @@ public class MainGUI extends JFrame implements GameObserver{
                         }
                     }
                 } else {
-                    updateUIConcrete(row, col);
+                    updateUIAfterCellClick(row, col);
                 }
                 checkGameWon();
             }
@@ -201,7 +336,7 @@ public class MainGUI extends JFrame implements GameObserver{
 
         private void checkGameWon() {
             if (minesweeperGame.isGameWon()) {
-                notifyGameObservers();
+                updateUIAfterGameWon();
             }
         }
     }
@@ -286,9 +421,7 @@ public class MainGUI extends JFrame implements GameObserver{
         };
     }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(MainGUI::new);
-    }
+
     private void addGameObserver(GameObserver observer) {
         observers.add(observer);
     }
@@ -300,7 +433,7 @@ public class MainGUI extends JFrame implements GameObserver{
     }
 
     private void startTimer() {
-        elapsedTime = 0;  // Сброс времени
+        elapsedTime = 0;
         timer = new Timer(1000, new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -321,6 +454,6 @@ public class MainGUI extends JFrame implements GameObserver{
         timeLabel.setText("Время: " + elapsedTime);
     }
     private void updateFlagsUI() {
-        flagsLabel.setText("Флаги: " + String.valueOf(countFlags));
+        flagsLabel.setText("Флаги: " + countFlags);
     }
 }
